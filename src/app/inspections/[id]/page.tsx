@@ -70,7 +70,7 @@ export default function InspectionDetailPage({ params }: { params: { id: string 
       items: {
         ...prev.items,
         [itemId]: {
-          ...prev.items[itemId],
+          ...(prev.items as any)[itemId],
           compliance
         }
       }
@@ -87,9 +87,9 @@ export default function InspectionDetailPage({ params }: { params: { id: string 
       items: {
         ...prev.items,
         [itemId]: {
-          ...prev.items[itemId],
+          ...(prev.items as any)[itemId],
           evidences: {
-            ...prev.items[itemId].evidences,
+            ...(prev.items as any)[itemId].evidences,
             [evidenceId]: {
               ...evidenceData,
               id: evidenceId,
@@ -109,9 +109,9 @@ export default function InspectionDetailPage({ params }: { params: { id: string 
       items: {
         ...prev.items,
         [itemId]: {
-          ...prev.items[itemId],
+          ...(prev.items as any)[itemId],
           evidences: Object.fromEntries(
-            Object.entries(prev.items[itemId].evidences).filter(([id]) => id !== evidenceId)
+            Object.entries((prev.items as any)[itemId].evidences).filter(([id]) => id !== evidenceId)
           )
         }
       }

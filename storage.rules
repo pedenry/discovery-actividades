@@ -1,0 +1,15 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow read/write access to inspection evidence files
+    match /inspections/{inspectionId}/evidences/{evidenceId}/{fileName} {
+      allow read, write: if true; // Open for development - restrict in production
+    }
+    
+    // Allow read/write access to all files during development
+    match /{allPaths=**} {
+      allow read, write: if true; // Open for development - restrict in production
+    }
+  }
+}

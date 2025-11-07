@@ -1,0 +1,159 @@
+{
+  "title": "Prototipo rápido para Planes de Vigilancia de Actividades",
+  "version": "0.1",
+  "purpose": "Validar con usuarios el flujo completo de inspecciones ambientales y de calidad realizadas por técnicos en los puertos. El prototipo es desechable y se usará para iterar UX y estructura de datos.",
+  "users": [
+    {
+      "role": "Técnico de calidad y medio ambiente",
+      "description": "Realiza inspecciones de las actividades de concesionarios en los puertos (bares, talleres, clubes náuticos, etc.)",
+      "platform": "Tablet / Móvil"
+    },
+    {
+      "role": "Administrador del sistema",
+      "description": "Carga plantillas de inspección y supervisa resultados (solo en pruebas)",
+      "platform": "Web"
+    }
+  ],
+  "use_cases": [
+    "Registrar una nueva actividad con sus datos generales",
+    "Cargar una plantilla asociada al tipo de actividad",
+    "Marcar cumplimiento de items y añadir evidencias",
+    "Duplicar una inspección anterior para actualizar documentos caducados",
+    "Adjuntar fotos o documentos como evidencia",
+    "Guardar y consultar inspecciones realizadas"
+  ],
+  "data_model": {
+    "actividad": {
+      "datos_generales": {
+        "CODI_TITOL_ADMINISTRATIU": "string",
+        "RAO_SOCIAL": "string",
+        "NOM_COMERCIAL": "string",
+        "OBJECTE_TITOL": "string",
+        "TIPUS_TITOL_ADMINISTRATIU": "string",
+        "DATA_INICI_TITOL": "date",
+        "DATA_FI_TITOL": "date",
+        "NOM_RESPONSABLE": "string"
+      },
+      "datos_seguimiento": {
+        "PERSONA_DE_CONTACTE": "string",
+        "ADRECA": "string",
+        "TELEFON": "string",
+        "CORREU": "string",
+        "SEGUIMENT_REALITZAT_PER": "string",
+        "DATA_SEGUIMENT": "date",
+        "SECTOR": "string",
+        "NUM_TREBALLADORS": "number",
+        "PLANTILLA": "reference to plantilla"
+      }
+    },
+    "plantilla": {
+      "id": "string",
+      "nombre": "string",
+      "items": [
+        {
+          "id": "string",
+          "nombre": "string",
+          "tipo": "requisito|solicitud",
+          "estado": "aplica|no_aplica",
+          "evidencias": ["reference to evidencia"]
+        }
+      ]
+    },
+    "evidencia": {
+      "INSTALACION": "string",
+      "DOCUMENTO_FOTO": "url",
+      "TIPO_EVIDENCIA": "string (documental u observada)",
+      "REFERENCIA_INSTALACION": "string",
+      "EMISOR": "string",
+      "FECHA_INICIO": "date",
+      "FECHA_FIN": "date",
+      "OBSERVACIONES": "string",
+      "REQUERIDO": "string"
+    }
+  },
+  "flows": [
+    {
+      "id": "F1",
+      "name": "Crear nueva inspección",
+      "steps": [
+        "Seleccionar 'Nueva inspección'",
+        "Introducir datos generales",
+        "Introducir datos de seguimiento",
+        "Seleccionar plantilla",
+        "Cargar items asociados",
+        "Marcar items (aplica / no aplica)",
+        "Añadir evidencias si aplica",
+        "Guardar inspección"
+      ]
+    },
+    {
+      "id": "F2",
+      "name": "Duplicar inspección anterior",
+      "steps": [
+        "Acceder a inspección pasada",
+        "Seleccionar 'Duplicar inspección'",
+        "Copiar datos, items y evidencias",
+        "Actualizar documentos caducados"
+      ]
+    },
+    {
+      "id": "F3",
+      "name": "Añadir item nuevo durante inspección",
+      "steps": [
+        "Abrir inspección existente",
+        "Añadir nuevo item (nombre, tipo, estado)",
+        "Añadir evidencias si aplica"
+      ]
+    }
+  ],
+  "functional_requirements": [
+    { "code": "RF-01", "description": "Crear, editar y eliminar inspecciones", "priority": "Alta" },
+    { "code": "RF-02", "description": "Cargar plantillas predefinidas de items", "priority": "Alta" },
+    { "code": "RF-03", "description": "Duplicar inspecciones", "priority": "Media" },
+    { "code": "RF-04", "description": "Añadir evidencias múltiples con campos definidos", "priority": "Alta" },
+    { "code": "RF-05", "description": "Adjuntar fotos o documentos", "priority": "Alta" },
+    { "code": "RF-06", "description": "Añadir nuevos items manualmente", "priority": "Media" },
+    { "code": "RF-07", "description": "Validar campos obligatorios y formatos", "priority": "Alta" },
+    { "code": "RF-08", "description": "Persistir datos en Firestore", "priority": "Alta" },
+    { "code": "RF-09", "description": "Diseñar interfaz responsive móvil/tablet", "priority": "Alta" },
+    { "code": "RF-10", "description": "Guardado local si se pierde conexión (opcional)", "priority": "Baja" }
+  ],
+  "technical_requirements": {
+    "frontend": "React + Next.js + TypeScript + Tailwind + shadcn/ui",
+    "backend": "Firebase (Firestore, Storage, Auth opcional)",
+    "responsive": true,
+    "hosting": "Vercel o Firebase Hosting",
+    "testing": "Mock con 3 items y 2 evidencias",
+    "firestore_structure": {
+      "plantillas": {
+        "{id}": {
+          "items": {
+            "{id}": {}
+          }
+        }
+      },
+      "inspecciones": {
+        "{id}": {
+          "items": {
+            "{id}": {
+              "evidencias": {
+                "{id}": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "feature_flags": {
+      "FEATURE_USE_FIREBASE": "true|false (para alternar entre Firestore real y mocks locales)"
+    }
+  },
+  "acceptance_criteria": [
+    "El técnico puede completar una inspección sin errores",
+    "La UI es usable en tablet y móvil",
+    "Las inspecciones duplicadas mantienen sus datos y evidencias",
+    "La jerarquía de Firestore se crea correctamente",
+    "Los formularios validan fechas y correos",
+    "Las evidencias se añaden dinámicamente sin recargar"
+  ]
+}

@@ -6,7 +6,7 @@ import { collection, doc, getDoc, getDocs, setDoc, addDoc } from 'firebase/fires
 import { db } from '@/lib/firebase-firestore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ArrowLeft, ArrowRight, Save, Plus } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Save, Plus, ChevronDown, ChevronRight } from 'lucide-react'
 
 interface TemplateItem {
   id: string
@@ -58,6 +58,7 @@ export default function NewInspectionPage() {
     expirationDate: '',
     observations: ''
   })
+  const [isConcessionExpanded, setIsConcessionExpanded] = useState(false)
   const [formData, setFormData] = useState({
     // General Data
     adminTitleCode: '',
@@ -86,6 +87,8 @@ export default function NewInspectionPage() {
   const concesionId = searchParams.get('concesionId')
   const concesionName = searchParams.get('concesionName')
   const concesionCode = searchParams.get('concesionCode')
+  const actividadId = searchParams.get('actividadId')
+  const actividadNombre = searchParams.get('actividadNombre')
   const inspectionId = searchParams.get('inspectionId')
   const mode = searchParams.get('mode') // 'edit' or null (create mode)
   const isEditMode = mode === 'edit' && inspectionId
@@ -146,7 +149,7 @@ export default function NewInspectionPage() {
   }
 
   const saveInspection = async () => {
-    if ((!templateId || !concesionId || !selectedTemplate) && !isEditMode) {
+    if ((!templateId || !actividadId || !selectedTemplate) && !isEditMode) {
       console.error('Missing required data for saving inspection')
       return
     }
@@ -154,29 +157,36 @@ export default function NewInspectionPage() {
     setSaving(true)
     
     try {
+      // Check if all items are compliant
+      const allCompliant = templateItems.every(item => item.compliance === 'compliant')
+      const resultado = allCompliant ? 'Favorable' : 'No Favorable'
+
       let currentInspectionId = inspectionId
 
       if (isEditMode && inspectionId) {
         // Update existing inspection
         const inspectionData = {
           updatedAt: new Date().toISOString(),
-          formData: formData
+          formData: formData,
+          resultado: resultado
         }
 
         await setDoc(doc(db, 'inspections', inspectionId), inspectionData, { merge: true })
         console.log('Inspection updated with ID:', inspectionId)
       } else {
-        // Create new inspection
+        // Create new inspection (asociada solo a actividad)
         const inspectionData = {
           templateId: templateId,
           templateName: selectedTemplate?.name || 'Unknown Template',
-          concesionId: concesionId,
-          concesionName: concesionName,
-          concesionCode: concesionCode,
-          status: 'draft',
+          actividadId: actividadId,
+          actividadNombre: actividadNombre,
+          titularNombre: concesionName,
+          resultado: resultado,
+          status: 'completed',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          formData: formData
+          formData: formData,
+          isNew: true
         }
 
         const inspectionRef = await addDoc(collection(db, 'inspections'), inspectionData)
@@ -226,8 +236,8 @@ export default function NewInspectionPage() {
 
       console.log('Inspection saved successfully!')
       
-      // Navigate back to inspections list or show success message
-      router.push('/concesiones')
+      // Navigate to Seguimientos PVA with inspecciones tab
+      router.push(`/seguimientos-pva?tab=inspecciones&newInspection=${currentInspectionId}`)
       
     } catch (error) {
       console.error('Error saving inspection:', error)
@@ -399,77 +409,121 @@ export default function NewInspectionPage() {
 
   const renderConcessionCard = () => {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold mb-4">Datos de la Concesión</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Contact Data Column */}
-          <div>
-            <h3 className="text-md font-medium text-gray-700 mb-3">Datos de Contacto</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-gray-500">Razón Social</label>
-                <p className="text-sm text-gray-900">{formData.legalName || concesionName || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Nombre Comercial</label>
-                <p className="text-sm text-gray-900">{formData.tradeName || concesionName || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Código Título</label>
-                <p className="text-sm text-gray-900">{formData.adminTitleCode || concesionCode || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Teléfono</label>
-                <p className="text-sm text-gray-900">{formData.phone || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Email</label>
-                <p className="text-sm text-gray-900">{formData.email || 'N/A'}</p>
-              </div>
-            </div>
+      <div className="bg-white rounded-lg border border-gray-200 mb-6">
+        {/* Header - Always visible */}
+        <div 
+          className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+          onClick={() => setIsConcessionExpanded(!isConcessionExpanded)}
+        >
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Datos de la Concesión</h2>
+            <span className="text-sm text-gray-600">
+              {concesionName || 'N/A'} {actividadNombre && `(${actividadNombre})`}
+            </span>
           </div>
-
-          {/* Follow-up Data Column */}
-          <div>
-            <h3 className="text-md font-medium text-gray-700 mb-3">Datos de Seguimiento</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-gray-500">Persona de Contacto</label>
-                <p className="text-sm text-gray-900">{formData.contactPerson || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Responsable</label>
-                <p className="text-sm text-gray-900">{formData.responsibleName || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Seguido por</label>
-                <p className="text-sm text-gray-900">{formData.followedBy || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Fecha de Seguimiento</label>
-                <p className="text-sm text-gray-900">{formData.followUpDate || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Realizado por</label>
-                <p className="text-sm text-gray-900">{formData.performedBy || 'N/A'}</p>
-              </div>
-            </div>
-          </div>
+          {isConcessionExpanded ? (
+            <ChevronDown className="w-5 h-5 text-gray-500" />
+          ) : (
+            <ChevronRight className="w-5 h-5 text-gray-500" />
+          )}
         </div>
+
+        {/* Expanded Content */}
+        {isConcessionExpanded && (
+          <div className="px-6 pb-6 border-t border-gray-200">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+              {/* Datos del Titular */}
+              <div>
+                <h3 className="text-md font-semibold text-gray-800 mb-3 pb-2 border-b border-gray-200">
+                  Datos del Titular
+                </h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Razón Social</label>
+                    <p className="text-sm text-gray-900">{formData.legalName || concesionName || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Nombre Comercial</label>
+                    <p className="text-sm text-gray-900">{formData.tradeName || concesionName || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Código Título</label>
+                    <p className="text-sm text-gray-900">{formData.adminTitleCode || concesionCode || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Teléfono</label>
+                    <p className="text-sm text-gray-900">{formData.phone || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Email</label>
+                    <p className="text-sm text-gray-900">{formData.email || 'N/A'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Datos de la Actividad */}
+              <div>
+                <h3 className="text-md font-semibold text-gray-800 mb-3 pb-2 border-b border-gray-200">
+                  Datos de la Actividad
+                </h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Nombre de la Actividad</label>
+                    <p className="text-sm text-gray-900">{actividadNombre || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Persona de Contacto</label>
+                    <p className="text-sm text-gray-900">{formData.contactPerson || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Responsable</label>
+                    <p className="text-sm text-gray-900">{formData.responsibleName || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Seguido por</label>
+                    <p className="text-sm text-gray-900">{formData.followedBy || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Fecha de Seguimiento</label>
+                    <p className="text-sm text-gray-900">{formData.followUpDate || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Realizado por</label>
+                    <p className="text-sm text-gray-900">{formData.performedBy || 'N/A'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" onClick={() => router.back()}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back
+      {/* Breadcrumbs with Save Button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <button 
+            onClick={() => router.push('/seguimientos-pva')}
+            className="hover:text-gray-900 transition-colors"
+          >
+            Seguimientos PVA
+          </button>
+          <ChevronRight className="w-4 h-4" />
+          <span className="text-gray-900 font-medium">
+            {isEditMode ? 'Editar Inspección' : 'Nueva Inspección'}
+          </span>
+        </div>
+        <Button 
+          className="bg-blue-600 hover:bg-blue-700"
+          onClick={saveInspection}
+          disabled={saving || templateItems.length === 0}
+        >
+          <Save className="h-4 w-4 mr-2" />
+          {saving ? 'Guardando...' : 'Guardar Inspección'}
         </Button>
-        <h1 className="text-3xl font-bold">
-          {isEditMode ? 'Editar Inspección' : 'Nueva Inspección'}
-        </h1>
       </div>
 
       {/* Concession Data Card */}
@@ -622,18 +676,6 @@ export default function NewInspectionPage() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* Save Button */}
-      <div className="flex justify-end">
-        <Button 
-          className="bg-blue-600 hover:bg-blue-700"
-          onClick={saveInspection}
-          disabled={saving || templateItems.length === 0}
-        >
-          <Save className="h-4 w-4 mr-2" />
-          {saving ? 'Guardando...' : (isEditMode ? 'Actualizar Inspección' : 'Guardar Inspección')}
-        </Button>
       </div>
 
       {/* Evidence Form Modal */}

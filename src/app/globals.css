@@ -57,3 +57,18 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  @keyframes highlight {
+    0% {
+      background-color: rgb(191, 219, 254);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+
+  .animate-highlight {
+    animation: highlight 3s ease-out;
+  }
+}

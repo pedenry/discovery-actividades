@@ -58,6 +58,11 @@ const menuItems = [
     href: '/templates',
     icon: Layout,
   },
+  {
+    title: 'Seguimientos PVA',
+    href: '/seguimientos-pva',
+    icon: FileText,
+  },
 ]
 
 const bottomMenuItems = [

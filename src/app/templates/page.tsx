@@ -101,32 +101,46 @@ export default function TemplatesPage() {
     setIsCreatingNew(true)
     setNewTemplate({ name: '', items: {} })
     setSelectedTemplate(null)
+    // Activar edición del nombre automáticamente
+    setTimeout(() => {
+      startEditing('template-name', 'name', '')
+    }, 100)
   }
 
   const handleSaveTemplate = async () => {
-    if (newTemplate.name && newTemplate.name.trim()) {
-      try {
-        const templateToSave = {
-          name: newTemplate.name,
-          items: newTemplate.items || {}
-        }
-        
-        const docRef = await addDoc(collection(db, 'templates'), templateToSave)
-        
-        // The template will be automatically added to the list via the onSnapshot listener
-        setIsCreatingNew(false)
-        setNewTemplate({ name: '', items: {} })
-        
-        // Select the newly created template
-        const newTemplate_: Template = {
-          id: docRef.id,
-          ...templateToSave
-        }
-        setSelectedTemplate(newTemplate_)
-      } catch (error) {
-        console.error('Error saving template:', error)
-        // You could add a toast notification here
+    if (!newTemplate.name || !newTemplate.name.trim()) {
+      setSaveStatus('⚠️ Debes dar un nombre a la plantilla')
+      setTimeout(() => setSaveStatus(null), 3000)
+      // Activar edición del nombre si está vacío
+      startEditing('template-name', 'name', '')
+      return
+    }
+
+    try {
+      const templateToSave = {
+        name: newTemplate.name,
+        items: newTemplate.items || {}
       }
+      
+      const docRef = await addDoc(collection(db, 'templates'), templateToSave)
+      
+      // The template will be automatically added to the list via the onSnapshot listener
+      setIsCreatingNew(false)
+      setNewTemplate({ name: '', items: {} })
+      
+      setSaveStatus('Plantilla guardada ✓')
+      setTimeout(() => setSaveStatus(null), 2000)
+      
+      // Select the newly created template
+      const newTemplate_: Template = {
+        id: docRef.id,
+        ...templateToSave
+      }
+      setSelectedTemplate(newTemplate_)
+    } catch (error) {
+      console.error('Error saving template:', error)
+      setSaveStatus('Error al guardar ❌')
+      setTimeout(() => setSaveStatus(null), 3000)
     }
   }
 
@@ -682,7 +696,11 @@ export default function TemplatesPage() {
                 
                 <div className="flex items-center gap-2">
                   {saveStatus && (
-                    <span className="text-sm text-green-600 font-medium animate-fade-in">
+                    <span className={`text-sm font-medium animate-fade-in ${
+                      saveStatus.includes('⚠️') ? 'text-yellow-600' :
+                      saveStatus.includes('❌') ? 'text-red-600' :
+                      'text-green-600'
+                    }`}>
                       {saveStatus}
                     </span>
                   )}

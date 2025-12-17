@@ -1,16 +1,16 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
   "/calendar/page": "app/calendar/page.js",
-  "/activities/page": "app/activities/page.js",
   "/explorer/page": "app/explorer/page.js",
-  "/concesiones/page": "app/concesiones/page.js",
+  "/activities/page": "app/activities/page.js",
   "/inspections/new/page": "app/inspections/new/page.js",
-  "/inspections/page": "app/inspections/page.js",
-  "/maintenance/page": "app/maintenance/page.js",
   "/page": "app/page.js",
+  "/maintenance/page": "app/maintenance/page.js",
+  "/concesiones/page": "app/concesiones/page.js",
   "/ports/page": "app/ports/page.js",
-  "/inspections/[id]/page": "app/inspections/[id]/page.js",
-  "/templates/page": "app/templates/page.js",
+  "/seguimientos-pva/page": "app/seguimientos-pva/page.js",
   "/providers/page": "app/providers/page.js",
-  "/seguimientos-pva/page": "app/seguimientos-pva/page.js"
+  "/inspections/[id]/page": "app/inspections/[id]/page.js",
+  "/inspections/page": "app/inspections/page.js",
+  "/templates/page": "app/templates/page.js"
 }

@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app'
+import { initializeApp, getApps, getApp } from 'firebase/app'
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 
 const firebaseConfig = {
@@ -7,10 +7,12 @@ const firebaseConfig = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "discovery-actividades",
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "discovery-actividades.firebasestorage.app",
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "421805603915",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:421805603915:web:fccd8329ace8a655621ce"
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:421805603915:web:fccd8329ace8a655621ce",
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 }
 
-const app = initializeApp(firebaseConfig)
+// Initialize Firebase only if it hasn't been initialized yet
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp()
 export const db = getFirestore(app)
 
 // Connect to emulators only if explicitly enabled

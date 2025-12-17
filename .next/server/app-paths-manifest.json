@@ -1,7 +1,7 @@
 {
   "/seguimientos-pva/page": "app/seguimientos-pva/page.js",
   "/concesiones/page": "app/concesiones/page.js",
-  "/inspections/[id]/page": "app/inspections/[id]/page.js",
   "/inspections/new/page": "app/inspections/new/page.js",
+  "/inspections/[id]/page": "app/inspections/[id]/page.js",
   "/templates/page": "app/templates/page.js"
 }

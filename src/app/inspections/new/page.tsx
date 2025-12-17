@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { collection, doc, getDoc, getDocs, setDoc, addDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase-firestore'
@@ -37,7 +37,7 @@ interface Evidence {
   itemId: string // Reference to the template item
 }
 
-export default function NewInspectionPage() {
+function NewInspectionPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
@@ -805,5 +805,13 @@ export default function NewInspectionPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function NewInspectionPage() {
+  return (
+    <Suspense fallback={<div className="p-8">Cargando...</div>}>
+      <NewInspectionPageContent />
+    </Suspense>
   )
 }

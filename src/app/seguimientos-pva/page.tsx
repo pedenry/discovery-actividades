@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Search, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -53,7 +53,7 @@ interface Seguimiento {
   customFields?: Record<string, string>
 }
 
-export default function SeguimientosPVAPage() {
+function SeguimientosPVAPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [searchTerm, setSearchTerm] = useState('')
@@ -931,5 +931,13 @@ export default function SeguimientosPVAPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function SeguimientosPVAPage() {
+  return (
+    <Suspense fallback={<div className="p-8">Cargando...</div>}>
+      <SeguimientosPVAPageContent />
+    </Suspense>
   )
 }

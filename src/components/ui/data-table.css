@@ -1,0 +1,33 @@
+/* Estilos para la tabla con columnas fijas (pinned columns) */
+.table-with-pinned-columns {
+  width: 100%;
+  max-width: 100%;
+}
+
+.table-scroll-container {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  position: relative;
+}
+
+/* Asegurar que el contenedor no se desborde */
+.table-scroll-container::-webkit-scrollbar {
+  height: 10px;
+}
+
+.table-scroll-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+  margin-left: 4px;
+  margin-right: 4px;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

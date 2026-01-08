@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, X, Trash2 } from 'lucide-react'
+import { Plus, Settings, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import ManageFieldsDialog from './ManageFieldsDialog'
 
 interface Titular {
   id: string
@@ -35,6 +36,7 @@ interface TitularesTabProps {
   selectedTitular: Titular | null
   onEditTitular: (titular: Titular) => void
   onDeleteTitular: (titularId: string) => void
+  onManageFields: (fields: string[]) => Promise<void>
 }
 
 export default function TitularesTab({
@@ -48,19 +50,12 @@ export default function TitularesTab({
   isLoading,
   selectedTitular,
   onEditTitular,
-  onDeleteTitular
+  onDeleteTitular,
+  onManageFields
 }: TitularesTabProps) {
   const [customFields, setCustomFields] = useState<Array<{name: string, value: string}>>([])
-  const [newFieldName, setNewFieldName] = useState('')
-  const [isAddingField, setIsAddingField] = useState(false)
-
-  const handleAddField = () => {
-    if (newFieldName.trim()) {
-      setCustomFields([...customFields, { name: newFieldName.trim(), value: '' }])
-      setNewFieldName('')
-      setIsAddingField(false)
-    }
-  }
+  const [isManageFieldsOpen, setIsManageFieldsOpen] = useState(false)
+  const [managedFieldNames, setManagedFieldNames] = useState<string[]>([])
 
   const handleFieldValueChange = (index: number, value: string) => {
     const updated = [...customFields]
@@ -68,8 +63,11 @@ export default function TitularesTab({
     setCustomFields(updated)
   }
 
-  const handleRemoveField = (index: number) => {
-    setCustomFields(customFields.filter((_, i) => i !== index))
+  const handleSaveFieldsManagement = async (fields: string[]) => {
+    // Llamar a la función del padre para actualizar Firestore
+    await onManageFields(fields)
+    // Actualizar el estado local
+    setManagedFieldNames(fields)
   }
 
   const handleSubmitWithCustomFields = () => {
@@ -86,45 +84,57 @@ export default function TitularesTab({
     setCustomFields([])
   }
 
+  // Sincronizar campos gestionados con los existentes
+  useEffect(() => {
+    const allFieldNames = Array.from(
+      new Set(
+        titulares.flatMap(titular => 
+          titular.customFields ? Object.keys(titular.customFields) : []
+        )
+      )
+    )
+    setManagedFieldNames(allFieldNames)
+  }, [titulares])
+
   // Cargar campos personalizados del titular seleccionado al abrir el diálogo
   useEffect(() => {
     if (selectedTitular && isDialogOpen) {
-      // Obtener todos los campos personalizados únicos de todos los titulares
-      const allFieldNames = Array.from(
-        new Set(
-          titulares.flatMap(titular => 
-            titular.customFields ? Object.keys(titular.customFields) : []
-          )
-        )
-      )
-      
-      // Crear campos con los valores del titular seleccionado o vacíos
-      const fields = allFieldNames.map(fieldName => ({
+      // Usar los campos gestionados
+      const fields = managedFieldNames.map(fieldName => ({
         name: fieldName,
         value: selectedTitular.customFields?.[fieldName] || ''
       }))
       
       setCustomFields(fields)
+    } else if (!selectedTitular && isDialogOpen) {
+      // Para nuevo titular, crear campos vacíos
+      const fields = managedFieldNames.map(fieldName => ({
+        name: fieldName,
+        value: ''
+      }))
+      setCustomFields(fields)
     } else if (!isDialogOpen) {
       setCustomFields([])
-      setNewFieldName('')
-      setIsAddingField(false)
     }
-  }, [selectedTitular, isDialogOpen, titulares])
+  }, [selectedTitular, isDialogOpen, managedFieldNames])
 
-  // Obtener todas las columnas únicas de campos personalizados
-  const allCustomFieldNames = Array.from(
-    new Set(
-      titulares.flatMap(titular => 
-        titular.customFields ? Object.keys(titular.customFields) : []
-      )
-    )
-  )
+  // Usar los campos gestionados como columnas de la tabla
+  const allCustomFieldNames = managedFieldNames
 
   return (
     <div className="space-y-4">
-      {/* Botón Nuevo Titular */}
-      <div className="flex justify-end">
+      {/* Botones Nuevo Titular y Gestionar Datos */}
+      <div className="flex justify-end gap-2">
+        <Button 
+          size="sm" 
+          variant="outline"
+          onClick={() => setIsManageFieldsOpen(true)}
+          className="border-blue-600 text-blue-600 hover:bg-blue-50"
+        >
+          <Settings className="w-4 h-4 mr-2" />
+          Gestionar datos
+        </Button>
+        
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
@@ -155,18 +165,7 @@ export default function TitularesTab({
               {/* Campos personalizados creados */}
               {customFields.map((field, index) => (
                 <div key={index} className="grid gap-2">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor={`custom-${index}`}>{field.name}</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRemoveField(index)}
-                      className="h-6 w-6 p-0 text-gray-400 hover:text-red-600"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  <Label htmlFor={`custom-${index}`}>{field.name}</Label>
                   <Input
                     id={`custom-${index}`}
                     value={field.value}
@@ -176,55 +175,12 @@ export default function TitularesTab({
                 </div>
               ))}
 
-              {/* Formulario para añadir nuevo campo */}
-              {isAddingField ? (
-                <div className="grid gap-2 p-3 border border-blue-200 bg-blue-50 rounded-lg">
-                  <Label htmlFor="newFieldName">Nombre del campo</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="newFieldName"
-                      value={newFieldName}
-                      onChange={(e) => setNewFieldName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          handleAddField()
-                        }
-                      }}
-                      placeholder="Ej: Zona, Puerto, Ubicación..."
-                      autoFocus
-                    />
-                    <Button
-                      type="button"
-                      onClick={handleAddField}
-                      disabled={!newFieldName.trim()}
-                      size="sm"
-                    >
-                      Añadir
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => {
-                        setIsAddingField(false)
-                        setNewFieldName('')
-                      }}
-                      size="sm"
-                    >
-                      Cancelar
-                    </Button>
-                  </div>
+              {managedFieldNames.length === 0 && (
+                <div className="p-4 text-center text-sm text-gray-500 bg-gray-50 rounded-lg border border-dashed">
+                  No hay campos personalizados definidos.
+                  <br />
+                  Usa el botón "Gestionar datos" para añadir campos.
                 </div>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsAddingField(true)}
-                  className="w-full border-dashed"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Añadir campo personalizado
-                </Button>
               )}
             </div>
             
@@ -241,6 +197,14 @@ export default function TitularesTab({
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Modal para gestionar campos */}
+      <ManageFieldsDialog
+        isOpen={isManageFieldsOpen}
+        onClose={() => setIsManageFieldsOpen(false)}
+        existingFields={managedFieldNames}
+        onSave={handleSaveFieldsManagement}
+      />
 
       {/* Tabla Titulares */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">

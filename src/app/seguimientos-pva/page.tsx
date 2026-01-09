@@ -127,6 +127,7 @@ function SeguimientosPVAPageContent() {
     resultado?: string
     isNew?: boolean
     createdAt?: string
+    etapaActual?: string
   }>>([])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -446,7 +447,8 @@ function SeguimientosPVAPageContent() {
         status: doc.data().status,
         resultado: doc.data().resultado,
         isNew: doc.data().isNew,
-        createdAt: doc.data().createdAt
+        createdAt: doc.data().createdAt,
+        etapaActual: doc.data().etapaActual
       }))
       
       console.log(`✅ ${data.length} inspecciones cargadas`, data)

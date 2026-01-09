@@ -6,14 +6,22 @@ import { collection, doc, getDoc, getDocs, setDoc, addDoc, deleteDoc } from 'fir
 import { db } from '@/lib/firebase-firestore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ArrowLeft, ArrowRight, Save, Plus, ChevronDown, ChevronRight, Building2, FileText, User, Phone, Mail, MapPin, Calendar, Briefcase } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Save, Plus, ChevronDown, ChevronRight, Building2, FileText, User, Phone, Mail, MapPin, Calendar, Briefcase, FileSearch, Trash2, Link2, Unlink, Check, Upload, MessageSquare } from 'lucide-react'
 
 interface TemplateItem {
   id: string
   name: string
   type: string
   description?: string
-  compliance: 'compliant' | 'nonCompliant' | 'n/a'
+  compliance: string
+}
+
+interface ComplianceState {
+  id: string
+  name: string
+  value: string
+  isDefault: boolean
+  isApproved: boolean // true = azul (aprueba), false = rojo (no aprueba)
 }
 
 interface Template {
@@ -35,6 +43,31 @@ interface Evidence {
   expirationDate: string // dd/mm/yyyy format
   observations: string
   itemId: string // Reference to the template item
+  // Campos de vinculación
+  linkedToEvidenceId?: string // ID de la evidencia vinculada
+  linkedToInspectionId?: string // ID de la inspección de la evidencia vinculada
+  linkedToItemId?: string // ID del item de la evidencia vinculada
+}
+
+// Interfaz para evidencias disponibles para vincular (de otras inspecciones)
+interface LinkedEvidenceInfo {
+  evidenceId: string
+  inspectionId: string
+  itemId: string
+  itemName: string
+  evidenceName: string
+  actividadName: string
+  pvaName: string
+  evidenceData: Evidence
+}
+
+// Interfaz para las etapas del estado de la inspección
+interface InspectionStage {
+  id: string
+  name: string
+  date: string
+  file: string
+  comments: string
 }
 
 function NewInspectionPageContent() {
@@ -46,7 +79,16 @@ function NewInspectionPageContent() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [evidences, setEvidences] = useState<Evidence[]>([])
   const [showEvidenceForm, setShowEvidenceForm] = useState(false)
+  const [editingEvidence, setEditingEvidence] = useState<Evidence | null>(null)
+  const [evidenceToDelete, setEvidenceToDelete] = useState<Evidence | null>(null)
   const [saving, setSaving] = useState(false)
+  // Estados para vinculación de evidencias
+  const [showLinkEvidenceModal, setShowLinkEvidenceModal] = useState(false)
+  const [availableEvidencesForLink, setAvailableEvidencesForLink] = useState<LinkedEvidenceInfo[]>([])
+  const [loadingAvailableEvidences, setLoadingAvailableEvidences] = useState(false)
+  const [selectedEvidenceToLink, setSelectedEvidenceToLink] = useState<LinkedEvidenceInfo | null>(null)
+  const [linkedEvidence, setLinkedEvidence] = useState<LinkedEvidenceInfo | null>(null)
+  const [showLinkedChangeWarning, setShowLinkedChangeWarning] = useState(false)
   const [evidenceFormData, setEvidenceFormData] = useState({
     installation: '',
     documentaryEvidenceObserved: '',
@@ -63,6 +105,27 @@ function NewInspectionPageContent() {
   const [concesionData, setConcesionData] = useState<any>(null)
   const [actividadData, setActividadData] = useState<any>(null)
   const [seguimientoData, setSeguimientoData] = useState<any>(null)
+  
+  // Estado de la inspección (wizard de etapas)
+  const [inspectionStages, setInspectionStages] = useState<InspectionStage[]>([
+    { id: 'inspeccion', name: 'Inspección', date: '', file: '', comments: '' },
+    { id: 'requerimiento', name: 'Requerimiento', date: '', file: '', comments: '' },
+    { id: 'reiteracion', name: 'Reiteración', date: '', file: '', comments: '' }
+  ])
+  
+  // Estados de cumplimiento dinámicos
+  const defaultComplianceStates: ComplianceState[] = [
+    { id: 'compliant', name: 'Conforme', value: 'compliant', isDefault: true, isApproved: true },
+    { id: 'nonCompliant', name: 'No Conforme', value: 'nonCompliant', isDefault: true, isApproved: false },
+    { id: 'n/a', name: 'N/A', value: 'n/a', isDefault: true, isApproved: true }
+  ]
+  const [complianceStates, setComplianceStates] = useState<ComplianceState[]>(defaultComplianceStates)
+  const [showAddStateModal, setShowAddStateModal] = useState(false)
+  const [newStateName, setNewStateName] = useState('')
+  const [newStateApproves, setNewStateApproves] = useState(true)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; stateId: string } | null>(null)
+  const [editingState, setEditingState] = useState<ComplianceState | null>(null)
+  
   const [formData, setFormData] = useState({
     // General Data
     adminTitleCode: '',
@@ -102,11 +165,126 @@ function NewInspectionPageContent() {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
-  const updateItemCompliance = (itemId: string, compliance: 'compliant' | 'nonCompliant' | 'n/a') => {
+  const updateItemCompliance = (itemId: string, compliance: string) => {
     setTemplateItems(prev => prev.map(item => 
       item.id === itemId ? { ...item, compliance } : item
     ))
   }
+
+  // Actualizar etapa de inspección
+  const updateInspectionStage = (stageId: string, field: 'date' | 'file' | 'comments', value: string) => {
+    setInspectionStages(prev => prev.map(stage =>
+      stage.id === stageId ? { ...stage, [field]: value } : stage
+    ))
+  }
+
+  // Verificar si una etapa tiene datos
+  const stageHasData = (stage: InspectionStage) => {
+    return stage.date !== '' || stage.file !== '' || stage.comments !== ''
+  }
+
+  // Cargar estados de cumplimiento personalizados desde Firebase
+  const loadCustomComplianceStates = async () => {
+    try {
+      const statesSnapshot = await getDocs(collection(db, 'compliance-states'))
+      const customStates: ComplianceState[] = []
+      statesSnapshot.forEach((doc) => {
+        const data = doc.data()
+        customStates.push({
+          id: doc.id,
+          name: data.name,
+          value: data.value,
+          isDefault: false,
+          isApproved: data.isApproved ?? true
+        })
+      })
+      setComplianceStates([...defaultComplianceStates, ...customStates])
+    } catch (error) {
+      console.error('Error loading custom compliance states:', error)
+    }
+  }
+
+  // Añadir nuevo estado de cumplimiento
+  const addComplianceState = async () => {
+    if (!newStateName.trim()) return
+    
+    const value = newStateName.toLowerCase().replace(/\s+/g, '-')
+    const newState: Omit<ComplianceState, 'id'> = {
+      name: newStateName.trim(),
+      value: value,
+      isDefault: false,
+      isApproved: newStateApproves
+    }
+    
+    try {
+      const docRef = await addDoc(collection(db, 'compliance-states'), newState)
+      setComplianceStates(prev => [...prev, { ...newState, id: docRef.id }])
+      setNewStateName('')
+      setNewStateApproves(true)
+      setShowAddStateModal(false)
+    } catch (error) {
+      console.error('Error adding compliance state:', error)
+      alert('Error al añadir el estado')
+    }
+  }
+
+  // Editar estado de cumplimiento personalizado
+  const updateComplianceState = async () => {
+    if (!editingState || !editingState.name.trim()) return
+    
+    try {
+      await setDoc(doc(db, 'compliance-states', editingState.id), {
+        name: editingState.name,
+        value: editingState.value,
+        isApproved: editingState.isApproved
+      })
+      setComplianceStates(prev => prev.map(s => 
+        s.id === editingState.id ? editingState : s
+      ))
+      setEditingState(null)
+      setContextMenu(null)
+    } catch (error) {
+      console.error('Error updating compliance state:', error)
+      alert('Error al actualizar el estado')
+    }
+  }
+
+  // Eliminar estado de cumplimiento personalizado
+  const deleteComplianceState = async (stateId: string) => {
+    const state = complianceStates.find(s => s.id === stateId)
+    if (!state || state.isDefault) return
+    
+    try {
+      await deleteDoc(doc(db, 'compliance-states', stateId))
+      setComplianceStates(prev => prev.filter(s => s.id !== stateId))
+      // Resetear items que tenían este estado a 'n/a'
+      setTemplateItems(prev => prev.map(item => 
+        item.compliance === state.value ? { ...item, compliance: 'n/a' } : item
+      ))
+      setContextMenu(null)
+    } catch (error) {
+      console.error('Error deleting compliance state:', error)
+      alert('Error al eliminar el estado')
+    }
+  }
+
+  // Manejar click derecho en estado
+  const handleStateContextMenu = (e: React.MouseEvent, stateId: string) => {
+    const state = complianceStates.find(s => s.id === stateId)
+    if (!state || state.isDefault) return
+    
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, stateId })
+  }
+
+  // Cerrar menú contextual al hacer click fuera
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null)
+    if (contextMenu) {
+      document.addEventListener('click', handleClick)
+      return () => document.removeEventListener('click', handleClick)
+    }
+  }, [contextMenu])
 
   const addNewItem = () => {
     const newItem: TemplateItem = {
@@ -129,16 +307,103 @@ function NewInspectionPageContent() {
     setEvidenceFormData(prev => ({ ...prev, [field]: value }))
   }
 
-  const addEvidence = () => {
+  // Función para verificar si se debe mostrar el aviso de cambio en evidencia vinculada
+  const handleSaveEvidence = () => {
     if (!selectedItemId) return
     
-    const newEvidence: Evidence = {
-      id: `evidence-${Date.now()}`,
-      ...evidenceFormData,
-      itemId: selectedItemId
+    // Si estamos editando una evidencia vinculada, mostrar aviso
+    if (editingEvidence && editingEvidence.linkedToEvidenceId) {
+      setShowLinkedChangeWarning(true)
+      return
     }
     
-    setEvidences(prev => [...prev, newEvidence])
+    addEvidence()
+  }
+
+  const addEvidence = async () => {
+    if (!selectedItemId) return
+    
+    if (editingEvidence) {
+      // Actualizar evidencia existente
+      const updatedEvidence = { ...editingEvidence, ...evidenceFormData }
+      setEvidences(prev => prev.map(e => 
+        e.id === editingEvidence.id 
+          ? updatedEvidence
+          : e
+      ))
+      
+      // Si la evidencia está vinculada, actualizar también la evidencia vinculada en Firestore
+      if (editingEvidence.linkedToEvidenceId && editingEvidence.linkedToInspectionId && editingEvidence.linkedToItemId) {
+        try {
+          // Obtener el documento de la evidencia vinculada para actualizarlo
+          const linkedItemsSnapshot = await getDocs(collection(db, 'inspections', editingEvidence.linkedToInspectionId, 'items'))
+          for (const itemDoc of linkedItemsSnapshot.docs) {
+            const evidencesSnapshot = await getDocs(collection(db, 'inspections', editingEvidence.linkedToInspectionId, 'items', itemDoc.id, 'evidences'))
+            for (const evidenceDoc of evidencesSnapshot.docs) {
+              if (evidenceDoc.id === editingEvidence.linkedToEvidenceId) {
+                // Actualizar la evidencia vinculada con los nuevos datos
+                await setDoc(doc(db, 'inspections', editingEvidence.linkedToInspectionId, 'items', itemDoc.id, 'evidences', evidenceDoc.id), {
+                  ...evidenceDoc.data(),
+                  installation: evidenceFormData.installation,
+                  documentaryEvidenceObserved: evidenceFormData.documentaryEvidenceObserved,
+                  document: evidenceFormData.document,
+                  photo: evidenceFormData.photo,
+                  reference: evidenceFormData.reference,
+                  issuer: evidenceFormData.issuer,
+                  presentationOrStartDate: evidenceFormData.presentationOrStartDate,
+                  expirationDate: evidenceFormData.expirationDate,
+                  observations: evidenceFormData.observations,
+                  updatedAt: new Date().toISOString()
+                })
+                console.log('Linked evidence updated:', evidenceDoc.id)
+                break
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error updating linked evidence:', error)
+        }
+      }
+      
+      setEditingEvidence(null)
+    } else {
+      // Crear nueva evidencia
+      const newEvidenceId = `evidence-${Date.now()}`
+      const newEvidence: Evidence = {
+        id: newEvidenceId,
+        ...evidenceFormData,
+        itemId: selectedItemId,
+        // Incluir referencia de vinculación si existe
+        linkedToEvidenceId: linkedEvidence?.evidenceId,
+        linkedToInspectionId: linkedEvidence?.inspectionId,
+        linkedToItemId: linkedEvidence?.itemId
+      }
+      
+      // Si hay vinculación, también actualizar la evidencia origen localmente para mostrar el icono
+      if (linkedEvidence) {
+        // Buscar si la evidencia origen está en el estado local (misma inspección)
+        setEvidences(prev => {
+          const updated = prev.map(e => {
+            // Si es la evidencia origen, actualizarla con la referencia bidireccional
+            if (e.id === linkedEvidence.evidenceId || 
+                (linkedEvidence.inspectionId === inspectionId && e.itemId === linkedEvidence.itemId)) {
+              return {
+                ...e,
+                linkedToEvidenceId: newEvidenceId,
+                linkedToInspectionId: inspectionId || 'current',
+                linkedToItemId: selectedItemId
+              }
+            }
+            return e
+          })
+          return [...updated, newEvidence]
+        })
+      } else {
+        setEvidences(prev => [...prev, newEvidence])
+      }
+    }
+    
+    setLinkedEvidence(null)
     setEvidenceFormData({
       installation: '',
       documentaryEvidenceObserved: '',
@@ -153,6 +418,146 @@ function NewInspectionPageContent() {
     setShowEvidenceForm(false)
   }
 
+  const openEditEvidence = (evidence: Evidence) => {
+    setEvidenceFormData({
+      installation: evidence.installation,
+      documentaryEvidenceObserved: evidence.documentaryEvidenceObserved,
+      document: evidence.document,
+      photo: evidence.photo,
+      reference: evidence.reference,
+      issuer: evidence.issuer,
+      presentationOrStartDate: evidence.presentationOrStartDate,
+      expirationDate: evidence.expirationDate,
+      observations: evidence.observations
+    })
+    setEditingEvidence(evidence)
+    setShowEvidenceForm(true)
+  }
+
+  const confirmDeleteEvidence = () => {
+    if (!evidenceToDelete) return
+    setEvidences(prev => prev.filter(e => e.id !== evidenceToDelete.id))
+    setEvidenceToDelete(null)
+    // Si estábamos editando esta evidencia, cerrar el modal
+    if (editingEvidence?.id === evidenceToDelete.id) {
+      setShowEvidenceForm(false)
+      setEditingEvidence(null)
+      setEvidenceFormData({
+        installation: '',
+        documentaryEvidenceObserved: '',
+        document: '',
+        photo: '',
+        reference: '',
+        issuer: '',
+        presentationOrStartDate: '',
+        expirationDate: '',
+        observations: ''
+      })
+    }
+  }
+
+  // Cargar evidencias disponibles para vincular de la misma concesión
+  const loadAvailableEvidencesForLink = async () => {
+    if (!concesionData?.id) return
+    
+    setLoadingAvailableEvidences(true)
+    try {
+      const evidencesForLink: LinkedEvidenceInfo[] = []
+      
+      // Obtener todas las actividades de esta concesión
+      const actividadesSnapshot = await getDocs(collection(db, 'actividades'))
+      const actividadesOfConcesion = actividadesSnapshot.docs.filter(doc => 
+        doc.data().concesionId === concesionData.id
+      )
+      
+      for (const actividadDoc of actividadesOfConcesion) {
+        const actividadInfo = actividadDoc.data()
+        
+        // Obtener inspecciones de esta actividad
+        const inspectionsSnapshot = await getDocs(collection(db, 'inspections'))
+        const inspectionsOfActividad = inspectionsSnapshot.docs.filter(doc => 
+          doc.data().actividadId === actividadDoc.id
+        )
+        
+        for (const inspectionDoc of inspectionsOfActividad) {
+          const isCurrentInspection = inspectionDoc.id === inspectionId
+          
+          // Obtener items de esta inspección
+          const itemsSnapshot = await getDocs(collection(db, 'inspections', inspectionDoc.id, 'items'))
+          
+          for (const itemDoc of itemsSnapshot.docs) {
+            const itemData = itemDoc.data()
+            
+            // Si es la inspección actual, excluir las evidencias del item seleccionado actualmente
+            // Para permitir vincular con evidencias de otros items de la misma inspección
+            if (isCurrentInspection && itemData.templateItemId === selectedItemId) continue
+            
+            // Obtener evidencias de este item
+            const evidencesSnapshot = await getDocs(collection(db, 'inspections', inspectionDoc.id, 'items', itemDoc.id, 'evidences'))
+            
+            for (const evidenceDoc of evidencesSnapshot.docs) {
+              const evidenceData = evidenceDoc.data()
+              
+              // No mostrar evidencias que ya están vinculadas a algo (para evitar cadenas)
+              // Y tampoco mostrar evidencias locales no guardadas
+              
+              evidencesForLink.push({
+                evidenceId: evidenceDoc.id,
+                inspectionId: inspectionDoc.id,
+                itemId: itemDoc.id,
+                itemName: itemData.name || 'Sin nombre',
+                evidenceName: evidenceData.installation || 'Sin nombre',
+                actividadName: actividadInfo.nombre || actividadInfo.name || 'Actividad',
+                pvaName: actividadInfo.pvaAsociado || actividadInfo.pva || 'PVA',
+                evidenceData: {
+                  id: evidenceDoc.id,
+                  ...evidenceData,
+                  itemId: itemDoc.id
+                } as Evidence
+              })
+            }
+          }
+        }
+      }
+      
+      setAvailableEvidencesForLink(evidencesForLink)
+    } catch (error) {
+      console.error('Error loading available evidences for link:', error)
+    } finally {
+      setLoadingAvailableEvidences(false)
+    }
+  }
+
+  // Abrir modal de vincular evidencia
+  const openLinkEvidenceModal = () => {
+    loadAvailableEvidencesForLink()
+    setShowLinkEvidenceModal(true)
+  }
+
+  // Vincular a la evidencia seleccionada
+  const linkToEvidence = (evidenceInfo: LinkedEvidenceInfo) => {
+    // Rellenar el formulario con los datos de la evidencia
+    setEvidenceFormData({
+      installation: evidenceInfo.evidenceData.installation,
+      documentaryEvidenceObserved: evidenceInfo.evidenceData.documentaryEvidenceObserved,
+      document: evidenceInfo.evidenceData.document,
+      photo: evidenceInfo.evidenceData.photo,
+      reference: evidenceInfo.evidenceData.reference,
+      issuer: evidenceInfo.evidenceData.issuer,
+      presentationOrStartDate: evidenceInfo.evidenceData.presentationOrStartDate,
+      expirationDate: evidenceInfo.evidenceData.expirationDate,
+      observations: evidenceInfo.evidenceData.observations
+    })
+    setLinkedEvidence(evidenceInfo)
+    setSelectedEvidenceToLink(null)
+    setShowLinkEvidenceModal(false)
+  }
+
+  // Desvincular evidencia
+  const unlinkEvidence = () => {
+    setLinkedEvidence(null)
+  }
+
   const saveInspection = async () => {
     if ((!templateId || !actividadId || !selectedTemplate) && !isEditMode) {
       console.error('Missing required data for saving inspection')
@@ -162,14 +567,36 @@ function NewInspectionPageContent() {
     setSaving(true)
     
     try {
-      // Check if all items are compliant or N/A (favorable) vs any non-compliant (desfavorable)
-      const allFavorable = templateItems.every(item => 
-        item.compliance === 'compliant' || item.compliance === 'n/a'
-      )
+      // Check if all items have approved states (favorable) vs any non-approved (desfavorable)
+      const allFavorable = templateItems.every(item => {
+        const state = complianceStates.find(s => s.value === item.compliance)
+        return state?.isApproved ?? false
+      })
       const resultado = allFavorable ? 'Favorable' : 'No Favorable'
       const estado = allFavorable ? 'favorable' : 'desfavorable'
 
       let currentInspectionId = inspectionId
+
+      // Determinar la etapa actual basada en las etapas rellenadas
+      const getCurrentStage = () => {
+        // Verificar de la más avanzada a la menos avanzada
+        const reiteracionStage = inspectionStages.find(s => s.id === 'reiteracion')
+        const requerimientoStage = inspectionStages.find(s => s.id === 'requerimiento')
+        const inspeccionStage = inspectionStages.find(s => s.id === 'inspeccion')
+        
+        if (reiteracionStage && (reiteracionStage.date || reiteracionStage.file || reiteracionStage.comments)) {
+          return 'Reiteración'
+        }
+        if (requerimientoStage && (requerimientoStage.date || requerimientoStage.file || requerimientoStage.comments)) {
+          return 'Requerimiento'
+        }
+        if (inspeccionStage && (inspeccionStage.date || inspeccionStage.file || inspeccionStage.comments || seguimientoData?.fechaProgramada)) {
+          return 'Inspección'
+        }
+        return null
+      }
+      
+      const currentStage = getCurrentStage()
 
       if (isEditMode && inspectionId) {
         // Update existing inspection
@@ -177,7 +604,9 @@ function NewInspectionPageContent() {
           updatedAt: new Date().toISOString(),
           formData: formData,
           resultado: resultado,
-          estado: estado
+          estado: estado,
+          etapas: inspectionStages,
+          etapaActual: currentStage
         }
 
         await setDoc(doc(db, 'inspections', inspectionId), inspectionData, { merge: true })
@@ -196,7 +625,9 @@ function NewInspectionPageContent() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           formData: formData,
-          isNew: true
+          isNew: true,
+          etapas: inspectionStages,
+          etapaActual: currentStage
         }
 
         const inspectionRef = await addDoc(collection(db, 'inspections'), inspectionData)
@@ -240,7 +671,7 @@ function NewInspectionPageContent() {
           const itemEvidences = evidences.filter(evidence => evidence.itemId === item.id)
           
           for (const evidence of itemEvidences) {
-            const evidenceData = {
+            const evidenceData: any = {
               installation: evidence.installation,
               documentaryEvidenceObserved: evidence.documentaryEvidenceObserved,
               document: evidence.document,
@@ -252,9 +683,42 @@ function NewInspectionPageContent() {
               observations: evidence.observations,
               createdAt: new Date().toISOString()
             }
+            
+            // Incluir campos de vinculación si existen
+            if (evidence.linkedToEvidenceId) {
+              evidenceData.linkedToEvidenceId = evidence.linkedToEvidenceId
+              evidenceData.linkedToInspectionId = evidence.linkedToInspectionId
+              evidenceData.linkedToItemId = evidence.linkedToItemId
+            }
 
-            await addDoc(collection(db, 'inspections', currentInspectionId, 'items', itemId, 'evidences'), evidenceData)
-            console.log('Evidence saved for item:', itemId)
+            const savedEvidenceRef = await addDoc(collection(db, 'inspections', currentInspectionId, 'items', itemId, 'evidences'), evidenceData)
+            console.log('Evidence saved for item:', itemId, 'with ID:', savedEvidenceRef.id)
+            
+            // Si esta evidencia tiene vinculación, actualizar la evidencia vinculada con el ID real y el itemId real
+            if (evidence.linkedToEvidenceId && evidence.linkedToInspectionId) {
+              try {
+                const linkedItemsSnapshot = await getDocs(collection(db, 'inspections', evidence.linkedToInspectionId, 'items'))
+                for (const linkedItemDoc of linkedItemsSnapshot.docs) {
+                  const linkedEvidencesSnapshot = await getDocs(collection(db, 'inspections', evidence.linkedToInspectionId, 'items', linkedItemDoc.id, 'evidences'))
+                  for (const linkedEvidenceDoc of linkedEvidencesSnapshot.docs) {
+                    if (linkedEvidenceDoc.id === evidence.linkedToEvidenceId) {
+                      // Actualizar con el ID real de la nueva evidencia y el itemId real
+                      await setDoc(doc(db, 'inspections', evidence.linkedToInspectionId, 'items', linkedItemDoc.id, 'evidences', linkedEvidenceDoc.id), {
+                        ...linkedEvidenceDoc.data(),
+                        linkedToEvidenceId: savedEvidenceRef.id,
+                        linkedToInspectionId: currentInspectionId,
+                        linkedToItemId: itemId,
+                        updatedAt: new Date().toISOString()
+                      })
+                      console.log('Bidirectional link updated with real IDs')
+                      break
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error('Error updating bidirectional link:', error)
+              }
+            }
           }
         }
       }
@@ -359,12 +823,18 @@ function NewInspectionPageContent() {
           setFormData(inspectionData.formData)
         }
         
+        // Load inspection stages if they exist
+        if (inspectionData.etapas && Array.isArray(inspectionData.etapas)) {
+          setInspectionStages(inspectionData.etapas)
+        }
+        
         // Load related entity data
         await loadRelatedData(inspectionData.actividadId || actividadId)
         
         // Load inspection items (if already filled)
         const itemsSnapshot = await getDocs(collection(db, 'inspections', inspectionId, 'items'))
         let items: TemplateItem[] = []
+        let loadedEvidences: Evidence[] = []
         const seenItemIds = new Set<string>()
         
         console.log('📦 Items in inspection:', itemsSnapshot.size)
@@ -392,13 +862,16 @@ function NewInspectionPageContent() {
           const evidencesSnapshot = await getDocs(collection(db, 'inspections', inspectionId, 'items', itemDoc.id, 'evidences'))
           evidencesSnapshot.forEach((evidenceDoc) => {
             const evidenceData = evidenceDoc.data()
-            setEvidences(prev => [...prev, {
+            loadedEvidences.push({
               id: evidenceDoc.id,
               ...evidenceData,
               itemId: itemData.templateItemId || itemDoc.id
-            } as Evidence])
+            } as Evidence)
           })
         }
+        
+        // Reemplazar evidencias en lugar de acumular
+        setEvidences(loadedEvidences)
         
         // Get templateId from inspection data or URL params
         const inspTemplateId = inspectionData.templateId || templateId
@@ -487,6 +960,9 @@ function NewInspectionPageContent() {
   // Load template and its items when component mounts
   useEffect(() => {
     const loadTemplateData = async () => {
+      // Cargar estados de cumplimiento personalizados
+      await loadCustomComplianceStates()
+      
       if (isEditMode && inspectionId) {
         // Load existing inspection data
         await loadInspectionData(inspectionId)
@@ -762,6 +1238,98 @@ function NewInspectionPageContent() {
               </div>
               
             </div>
+
+            {/* Estado de la Inspección - Wizard Horizontal */}
+            <div className="mt-6 bg-gradient-to-br from-slate-50 to-gray-50 rounded-xl p-5 border border-slate-200">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="p-2 bg-slate-600 rounded-lg">
+                  <FileText className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-base font-semibold text-slate-900">Estado de la Inspección</h3>
+              </div>
+              
+              <div className="space-y-4">
+                {inspectionStages.map((stage, index) => {
+                  const isFirst = index === 0
+                  const isLast = index === inspectionStages.length - 1
+                  // Para la primera etapa, considerar también la fecha programada del seguimiento
+                  const effectiveDate = stage.date || (isFirst && seguimientoData?.fechaProgramada ? seguimientoData.fechaProgramada : '')
+                  const hasData = stage.date !== '' || stage.file !== '' || stage.comments !== '' || (isFirst && seguimientoData?.fechaProgramada)
+                  
+                  return (
+                    <div key={stage.id} className="relative">
+                      {/* Línea vertical conectora */}
+                      {!isLast && (
+                        <div className="absolute left-4 top-8 w-0.5 h-12 bg-slate-200" />
+                      )}
+                      
+                      <div className="flex items-start gap-4">
+                        {/* Círculo del wizard */}
+                        <div className="relative z-10 flex-shrink-0">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-colors ${
+                            hasData 
+                              ? 'bg-blue-500 border-blue-500 text-white' 
+                              : 'bg-white border-slate-300 text-slate-400'
+                          }`}>
+                            {hasData ? (
+                              <Check className="w-4 h-4" />
+                            ) : (
+                              <span className="text-xs font-medium">{index + 1}</span>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Nombre de la etapa */}
+                        <div className="w-28 flex-shrink-0 pt-1">
+                          <h4 className={`font-medium text-sm ${hasData ? 'text-blue-700' : 'text-slate-700'}`}>
+                            {stage.name}
+                          </h4>
+                        </div>
+                        
+                        {/* Campos en la misma fila */}
+                        <div className="flex-1 flex items-center gap-4">
+                          {/* Campo de fecha */}
+                          <div className="flex items-center gap-2 flex-1">
+                            <Calendar className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                            <Input
+                              type="date"
+                              value={effectiveDate}
+                              onChange={(e) => updateInspectionStage(stage.id, 'date', e.target.value)}
+                              className="h-8 text-sm"
+                              placeholder="Fecha"
+                            />
+                          </div>
+                          
+                          {/* Campo de archivo */}
+                          <div className="flex items-center gap-2 flex-1">
+                            <Upload className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                            <Input
+                              type="file"
+                              onChange={(e) => {
+                                const fileName = e.target.files?.[0]?.name || ''
+                                updateInspectionStage(stage.id, 'file', fileName)
+                              }}
+                              className="h-8 text-sm cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                            />
+                          </div>
+                          
+                          {/* Campo de comentarios */}
+                          <div className="flex items-center gap-2 flex-1">
+                            <MessageSquare className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                            <Input
+                              value={stage.comments}
+                              onChange={(e) => updateInspectionStage(stage.id, 'comments', e.target.value)}
+                              placeholder="Comentarios..."
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -847,39 +1415,67 @@ function NewInspectionPageContent() {
                       <h3 className="font-semibold">{item.name}</h3>
                     )}
                   </div>
+                  {/* Chips de evidencias asociadas */}
+                  {evidences.filter(e => e.itemId === item.id).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {evidences.filter(e => e.itemId === item.id).map((evidence) => (
+                        <span 
+                          key={evidence.id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded-full border border-blue-200"
+                          title={evidence.documentaryEvidenceObserved}
+                        >
+                          <FileSearch className="w-3 h-3" />
+                          {evidence.installation}
+                          {evidence.linkedToEvidenceId && (
+                            <Link2 className="w-3 h-3 text-blue-500" />
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {item.description && (
                     <p className="text-sm text-gray-600 mb-3">{item.description}</p>
                   )}
-                  <div className="flex gap-2 flex-wrap">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {complianceStates.map((state) => {
+                      const isSelected = item.compliance === state.value
+                      let variant: 'default' | 'destructive' | 'secondary' | 'outline' = 'outline'
+                      if (isSelected) {
+                        if (state.value === 'n/a') {
+                          variant = 'secondary'
+                        } else if (state.isApproved) {
+                          variant = 'default'
+                        } else {
+                          variant = 'destructive'
+                        }
+                      }
+                      return (
+                        <Button
+                          key={state.id}
+                          variant={variant}
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            updateItemCompliance(item.id, state.value)
+                          }}
+                          onContextMenu={(e) => handleStateContextMenu(e, state.id)}
+                          className={!state.isDefault ? 'border-dashed' : ''}
+                        >
+                          {state.name}
+                        </Button>
+                      )
+                    })}
                     <Button
-                      variant={item.compliance === 'compliant' ? 'default' : 'outline'}
+                      variant="ghost"
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation()
-                        updateItemCompliance(item.id, 'compliant')
+                        setShowAddStateModal(true)
                       }}
+                      className="h-8 w-8 p-0 text-gray-400 hover:text-gray-600"
+                      title="Añadir nuevo estado"
                     >
-                      Conforme
-                    </Button>
-                    <Button
-                      variant={item.compliance === 'nonCompliant' ? 'destructive' : 'outline'}
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        updateItemCompliance(item.id, 'nonCompliant')
-                      }}
-                    >
-                      No Conforme
-                    </Button>
-                    <Button
-                      variant={item.compliance === 'n/a' ? 'secondary' : 'outline'}
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        updateItemCompliance(item.id, 'n/a')
-                      }}
-                    >
-                      N/A
+                      <Plus className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
@@ -900,16 +1496,21 @@ function NewInspectionPageContent() {
         {/* Right Panel - Evidence */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Evidencias</h2>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <FileSearch className="w-5 h-5" />
+              Evidencias
+            </h2>
             {selectedItemId && (
-              <Button 
-                onClick={() => setShowEvidenceForm(true)} 
-                variant="outline" 
-                size="sm"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Añadir Evidencia
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={() => setShowEvidenceForm(true)} 
+                  variant="outline" 
+                  size="sm"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Añadir Evidencia
+                </Button>
+              </div>
             )}
           </div>
           
@@ -922,8 +1523,32 @@ function NewInspectionPageContent() {
               {evidences
                 .filter(evidence => evidence.itemId === selectedItemId)
                 .map((evidence) => (
-                  <div key={evidence.id} className="border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-semibold mb-2">{evidence.installation}</h4>
+                  <div 
+                    key={evidence.id} 
+                    className={`relative group border rounded-lg p-4 cursor-pointer hover:border-blue-300 hover:bg-blue-50/50 transition-colors ${
+                      evidence.linkedToEvidenceId 
+                        ? 'border-l-4 border-l-blue-500 border-gray-200' 
+                        : 'border-gray-200'
+                    }`}
+                    onClick={() => openEditEvidence(evidence)}
+                  >
+                    {/* Botón de eliminar - visible en hover */}
+                    <button
+                      className="absolute top-2 right-2 p-1.5 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setEvidenceToDelete(evidence)
+                      }}
+                      title="Eliminar evidencia"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    <h4 className="font-semibold mb-2 pr-8 flex items-center gap-2">
+                      {evidence.linkedToEvidenceId && (
+                        <Link2 className="w-4 h-4 text-blue-500" />
+                      )}
+                      {evidence.installation}
+                    </h4>
                     <p className="text-sm text-gray-600 mb-2">{evidence.documentaryEvidenceObserved}</p>
                     <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
                       <div><strong>Referencia:</strong> {evidence.reference}</div>
@@ -958,15 +1583,64 @@ function NewInspectionPageContent() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Añadir Evidencia</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold">
+                  {editingEvidence ? 'Editar Evidencia' : 'Añadir Evidencia'}
+                </h3>
+                {!editingEvidence && !linkedEvidence && (
+                  <Button 
+                    onClick={openLinkEvidenceModal} 
+                    variant="outline" 
+                    size="sm"
+                    title="Vincular con evidencia existente"
+                  >
+                    <Link2 className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
               <Button 
                 variant="ghost" 
                 size="sm"
-                onClick={() => setShowEvidenceForm(false)}
+                onClick={() => {
+                  setShowEvidenceForm(false)
+                  setEditingEvidence(null)
+                  setLinkedEvidence(null)
+                  setEvidenceFormData({
+                    installation: '',
+                    documentaryEvidenceObserved: '',
+                    document: '',
+                    photo: '',
+                    reference: '',
+                    issuer: '',
+                    presentationOrStartDate: '',
+                    expirationDate: '',
+                    observations: ''
+                  })
+                }}
               >
                 ×
               </Button>
             </div>
+
+            {/* Card de vinculación - solo visible cuando hay evidencia vinculada y no estamos editando */}
+            {linkedEvidence && !editingEvidence && (
+              <div className="group relative bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-blue-600" />
+                  <span className="text-sm text-blue-800">
+                    <strong>Vinculado a:</strong> {linkedEvidence.itemName} - {linkedEvidence.evidenceName} ({linkedEvidence.actividadName}, {linkedEvidence.pvaName})
+                  </span>
+                </div>
+                {/* Icono para desvincular - visible en hover */}
+                <button
+                  className="absolute top-2 right-2 p-1.5 rounded-full bg-white border border-blue-200 text-blue-400 hover:text-red-500 hover:border-red-300 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                  onClick={unlinkEvidence}
+                  title="Desvincular evidencia"
+                >
+                  <Unlink className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -976,6 +1650,8 @@ function NewInspectionPageContent() {
                     value={evidenceFormData.installation}
                     onChange={(e) => updateEvidenceFormData('installation', e.target.value)}
                     placeholder="Nombre de la instalación"
+                    disabled={linkedEvidence !== null && !editingEvidence}
+                    className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                   />
                 </div>
                 <div>
@@ -984,6 +1660,8 @@ function NewInspectionPageContent() {
                     value={evidenceFormData.reference}
                     onChange={(e) => updateEvidenceFormData('reference', e.target.value)}
                     placeholder="Referencia del documento"
+                    disabled={linkedEvidence !== null && !editingEvidence}
+                    className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                   />
                 </div>
               </div>
@@ -994,7 +1672,8 @@ function NewInspectionPageContent() {
                   value={evidenceFormData.documentaryEvidenceObserved}
                   onChange={(e) => updateEvidenceFormData('documentaryEvidenceObserved', e.target.value)}
                   placeholder="Descripción de la evidencia observada"
-                />
+                  disabled={linkedEvidence !== null && !editingEvidence}
+                  className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}/>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1004,6 +1683,8 @@ function NewInspectionPageContent() {
                     value={evidenceFormData.issuer}
                     onChange={(e) => updateEvidenceFormData('issuer', e.target.value)}
                     placeholder="Entidad emisora"
+                    disabled={linkedEvidence !== null && !editingEvidence}
+                    className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                   />
                 </div>
                 <div>
@@ -1012,6 +1693,8 @@ function NewInspectionPageContent() {
                     type="date"
                     value={evidenceFormData.presentationOrStartDate}
                     onChange={(e) => updateEvidenceFormData('presentationOrStartDate', e.target.value)}
+                    disabled={linkedEvidence !== null && !editingEvidence}
+                    className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                   />
                 </div>
               </div>
@@ -1023,6 +1706,8 @@ function NewInspectionPageContent() {
                     type="date"
                     value={evidenceFormData.expirationDate}
                     onChange={(e) => updateEvidenceFormData('expirationDate', e.target.value)}
+                    disabled={linkedEvidence !== null && !editingEvidence}
+                    className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                   />
                 </div>
                 <div>
@@ -1030,6 +1715,8 @@ function NewInspectionPageContent() {
                   <Input
                     type="file"
                     accept=".pdf"
+                    disabled={linkedEvidence !== null && !editingEvidence}
+                    className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                     onChange={(e) => {
                       // TODO: Handle file upload
                       console.log('PDF file selected:', e.target.files?.[0])
@@ -1043,6 +1730,8 @@ function NewInspectionPageContent() {
                 <Input
                   type="file"
                   accept="image/*"
+                  disabled={linkedEvidence !== null && !editingEvidence}
+                  className={linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}
                   onChange={(e) => {
                     // TODO: Handle file upload
                     console.log('Image file selected:', e.target.files?.[0])
@@ -1053,27 +1742,388 @@ function NewInspectionPageContent() {
               <div>
                 <label className="block text-sm font-medium mb-2">Observaciones</label>
                 <textarea
-                  className="w-full p-2 border border-gray-300 rounded-md"
+                  className={`w-full p-2 border border-gray-300 rounded-md ${linkedEvidence && !editingEvidence ? 'bg-gray-100' : ''}`}
                   rows={3}
                   value={evidenceFormData.observations}
                   onChange={(e) => updateEvidenceFormData('observations', e.target.value)}
                   placeholder="Observaciones adicionales"
+                  disabled={linkedEvidence !== null && !editingEvidence}
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="flex justify-between mt-6">
+              {/* Botón eliminar - solo visible en modo edición */}
+              <div>
+                {editingEvidence && (
+                  <Button 
+                    variant="outline"
+                    className="text-red-600 border-red-300 hover:bg-red-50 hover:text-red-700"
+                    onClick={() => setEvidenceToDelete(editingEvidence)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Eliminar Evidencia
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowEvidenceForm(false)
+                    setEditingEvidence(null)
+                    setEvidenceFormData({
+                      installation: '',
+                      documentaryEvidenceObserved: '',
+                      document: '',
+                      photo: '',
+                      reference: '',
+                      issuer: '',
+                      presentationOrStartDate: '',
+                      expirationDate: '',
+                      observations: ''
+                    })
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleSaveEvidence}
+                  disabled={!evidenceFormData.installation || !evidenceFormData.documentaryEvidenceObserved}
+                >
+                  {editingEvidence ? 'Guardar Cambios' : 'Añadir Evidencia'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para añadir nuevo estado de cumplimiento */}
+      {showAddStateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">Añadir Nuevo Estado</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Este estado estará disponible para todos los items de la inspección.
+            </p>
+            <Input
+              value={newStateName}
+              onChange={(e) => setNewStateName(e.target.value)}
+              placeholder="Nombre del estado (ej: Pendiente, En revisión...)"
+              className="mb-4"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newStateName.trim()) addComplianceState()
+                if (e.key === 'Escape') {
+                  setShowAddStateModal(false)
+                  setNewStateName('')
+                  setNewStateApproves(true)
+                }
+              }}
+            />
+            <label className="flex items-center gap-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newStateApproves}
+                onChange={(e) => setNewStateApproves(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-700">Este estado aprueba el requisito</span>
+            </label>
+            <p className="text-xs text-gray-500 mb-4">
+              {newStateApproves 
+                ? '✓ Se mostrará en azul y contará como favorable' 
+                : '✗ Se mostrará en rojo y contará como no favorable'}
+            </p>
+            <div className="flex justify-end gap-2">
               <Button 
                 variant="outline" 
-                onClick={() => setShowEvidenceForm(false)}
+                onClick={() => {
+                  setShowAddStateModal(false)
+                  setNewStateName('')
+                  setNewStateApproves(true)
+                }}
               >
                 Cancelar
               </Button>
               <Button 
-                onClick={addEvidence}
-                disabled={!evidenceFormData.installation || !evidenceFormData.documentaryEvidenceObserved}
+                onClick={addComplianceState}
+                disabled={!newStateName.trim()}
               >
-                Añadir Evidencia
+                Añadir Estado
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Menú contextual para editar/eliminar estados personalizados */}
+      {contextMenu && (
+        <div 
+          className="fixed bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[160px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            onClick={() => {
+              const state = complianceStates.find(s => s.id === contextMenu.stateId)
+              if (state) setEditingState({ ...state })
+            }}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Editar estado
+          </button>
+          <button
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+            onClick={() => deleteComplianceState(contextMenu.stateId)}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Eliminar estado
+          </button>
+        </div>
+      )}
+
+      {/* Modal para editar estado de cumplimiento */}
+      {editingState && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">Editar Estado</h3>
+            <Input
+              value={editingState.name}
+              onChange={(e) => setEditingState({ ...editingState, name: e.target.value })}
+              placeholder="Nombre del estado"
+              className="mb-4"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && editingState.name.trim()) updateComplianceState()
+                if (e.key === 'Escape') setEditingState(null)
+              }}
+            />
+            <label className="flex items-center gap-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editingState.isApproved}
+                onChange={(e) => setEditingState({ ...editingState, isApproved: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-700">Este estado aprueba el requisito</span>
+            </label>
+            <p className="text-xs text-gray-500 mb-4">
+              {editingState.isApproved 
+                ? '✓ Se mostrará en azul y contará como favorable' 
+                : '✗ Se mostrará en rojo y contará como no favorable'}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setEditingState(null)}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={updateComplianceState}
+                disabled={!editingState.name.trim()}
+              >
+                Guardar Cambios
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diálogo de confirmación para eliminar evidencia */}
+      {evidenceToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold mb-2">¿Eliminar esta evidencia?</h3>
+            <p className="text-gray-600 mb-4">
+              Se eliminará la evidencia <strong>"{evidenceToDelete.installation}"</strong>. Esta acción no se puede deshacer.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setEvidenceToDelete(null)}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                variant="destructive"
+                onClick={confirmDeleteEvidence}
+              >
+                Eliminar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para seleccionar evidencia a vincular */}
+      {showLinkEvidenceModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Link2 className="w-5 h-5" />
+                Vincular con evidencia existente
+              </h3>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => {
+                  setShowLinkEvidenceModal(false)
+                  setSelectedEvidenceToLink(null)
+                }}
+              >
+                ×
+              </Button>
+            </div>
+            
+            {loadingAvailableEvidences ? (
+              <div className="flex-1 flex items-center justify-center py-12">
+                <p className="text-gray-500">Cargando evidencias...</p>
+              </div>
+            ) : availableEvidencesForLink.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center py-12">
+                <p className="text-gray-500">No hay evidencias disponibles en esta concesión</p>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-3">
+                {availableEvidencesForLink.map((evidenceInfo) => (
+                  <div 
+                    key={`${evidenceInfo.inspectionId}-${evidenceInfo.evidenceId}`}
+                    className="border border-gray-200 rounded-lg p-4 cursor-pointer hover:border-blue-300 hover:bg-blue-50/50 transition-colors"
+                    onClick={() => setSelectedEvidenceToLink(evidenceInfo)}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">{evidenceInfo.evidenceName}</h4>
+                        <div className="mt-2 space-y-1 text-sm text-gray-600">
+                          <p><strong>Actividad:</strong> {evidenceInfo.actividadName}</p>
+                          <p><strong>PVA:</strong> {evidenceInfo.pvaName}</p>
+                          <p><strong>Item:</strong> {evidenceInfo.itemName}</p>
+                        </div>
+                      </div>
+                      <Link2 className="w-4 h-4 text-gray-400" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de vista previa de evidencia a vincular */}
+      {selectedEvidenceToLink && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[55]">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Detalles de la evidencia</h3>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => setSelectedEvidenceToLink(null)}
+              >
+                ×
+              </Button>
+            </div>
+            
+            {/* Info de origen */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-blue-800">
+                <strong>Actividad:</strong> {selectedEvidenceToLink.actividadName} | 
+                <strong> PVA:</strong> {selectedEvidenceToLink.pvaName} | 
+                <strong> Item:</strong> {selectedEvidenceToLink.itemName}
+              </p>
+            </div>
+
+            {/* Datos de la evidencia (solo lectura) */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Instalación</label>
+                  <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.installation || '-'}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Referencia</label>
+                  <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.reference || '-'}</p>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-500 mb-1">Evidencia Documental Observada</label>
+                <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.documentaryEvidenceObserved || '-'}</p>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Emisor</label>
+                  <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.issuer || '-'}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Fecha de Presentación/Inicio</label>
+                  <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.presentationOrStartDate || '-'}</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Fecha de Caducidad</label>
+                  <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.expirationDate || '-'}</p>
+                </div>
+              </div>
+              
+              {selectedEvidenceToLink.evidenceData.observations && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Observaciones</label>
+                  <p className="text-gray-900">{selectedEvidenceToLink.evidenceData.observations}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <Button 
+                onClick={() => linkToEvidence(selectedEvidenceToLink)}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Link2 className="w-4 h-4 mr-2" />
+                Vincular a esta evidencia
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de aviso de cambio en evidencia vinculada */}
+      {showLinkedChangeWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[65]">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold mb-2 text-amber-600">⚠️ Evidencia vinculada</h3>
+            <p className="text-gray-600 mb-4">
+              Esta evidencia está vinculada a otra. Los cambios que realices se aplicarán también a la evidencia vinculada.
+            </p>
+            <p className="text-sm text-gray-500 mb-4">
+              <strong>Vinculada a:</strong> {linkedEvidence?.itemName} - {linkedEvidence?.evidenceName}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowLinkedChangeWarning(false)}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={() => {
+                  setShowLinkedChangeWarning(false)
+                  addEvidence()
+                }}
+              >
+                Guardar en ambas
               </Button>
             </div>
           </div>

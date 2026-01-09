@@ -54,6 +54,7 @@ interface Inspeccion {
   resultado?: string
   isNew?: boolean
   createdAt?: string
+  etapaActual?: string
 }
 
 // Configuración de estados de inspección
@@ -274,6 +275,15 @@ export default function SeguimientosPVATab({
                   `}>
                     {config.label}
                   </div>
+                  
+                  {/* Chip de etapa actual */}
+                  {insp.etapaActual && (
+                    <div className="mt-1">
+                      <div className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                        {insp.etapaActual}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}

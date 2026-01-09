@@ -1,5 +1,4 @@
 {
-  "/inspections/new/page": "app/inspections/new/page.js",
   "/seguimientos-pva/page": "app/seguimientos-pva/page.js",
-  "/templates/page": "app/templates/page.js"
+  "/inspections/new/page": "app/inspections/new/page.js"
 }
